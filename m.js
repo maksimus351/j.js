@@ -1,12 +1,13 @@
-
-function rezka(component, _object){
-    let network    = new Lampa.Reguest()
-    let extract    = {}
-    let embed      = component.proxy('rezka') + 'https://voidboost.net/'
-    let object     = _object
-
+function cdnmovies(component, _object){
+    let network  = new Lampa.Reguest()
+    let extract  = {}
+    let results  = []
+    let object   = _object
     let select_title = ''
-    let select_id    = ''
+
+    let embed = component.proxy('cdnmovies') +  'https://cdnmovies.net/api/short/'
+    let token = '02d56099082ad5ad586d7fe4e2493dd9'
+
     let filter_items = {}
 
     let choice = {
@@ -16,17 +17,72 @@ function rezka(component, _object){
     }
 
     /**
-     * Поиск
+     * Начать поиск
      * @param {Object} _object 
      */
-    this.search = function(_object, kinopoisk_id){
-        object = _object
+    this.search = function(_object, data){
+        if(this.wait_similars) return this.find(data[0].iframe_src)
 
-        select_id    = kinopoisk_id
+        object  = _object
+
         select_title = object.movie.title
 
-        getFirstTranlate(kinopoisk_id, (voice)=>{
-            getFilm(kinopoisk_id, voice)
+        let url  = embed
+        let itm  = data[0]
+
+        if(itm.iframe_src){
+            let type = itm.iframe_src.split('/').slice(-2)[0]
+
+            if(type == 'movie') type = 'movies'
+
+            url += type
+
+            url = Lampa.Utils.addUrlComponent(url, 'token=' + token)
+            url = Lampa.Utils.addUrlComponent(url,itm.imdb_id ? 'imdb_id='+encodeURIComponent(itm.imdb_id) : 'title='+encodeURIComponent(itm.title))
+            url = Lampa.Utils.addUrlComponent(url,'field='+encodeURIComponent('global'))
+
+            network.silent(url, (json) => {
+                let array_data = []
+
+                for (let key in json.data) {
+                    array_data.push(json.data[key])
+                }
+
+                json.data = array_data
+
+                if(json.data.length > 1){
+                    this.wait_similars = true
+
+                    component.similars(json.data)
+                    component.loading(false)
+                }
+                else if(json.data.length == 1){
+                    this.find(json.data[0].iframe_src)
+                }
+                else{
+                    component.emptyForQuery(select_title)
+                }
+            },(a, c)=>{
+                component.empty(network.errorDecode(a, c))
+            },false,{
+                dataType: 'json'
+            })
+        }
+        else{
+            component.emptyForQuery(select_title)
+        }
+    }
+
+    this.find = function (url) {
+        network.clear()
+        network.silent('http:'+url, (json)=>{
+            parse(json)
+
+            component.loading(false)
+        }, (a, c)=>{
+            component.empty(network.errorDecode(a, c))
+        },false,{
+            dataType: 'text'
         })
     }
 
@@ -37,7 +93,7 @@ function rezka(component, _object){
     /**
      * Сброс фильтра
      */
-     this.reset = function(){
+    this.reset = function(){
         component.reset()
 
         choice = {
@@ -46,9 +102,9 @@ function rezka(component, _object){
             voice_name: ''
         }
 
-        component.loading(true)
+        filter()
 
-        getFilm(select_id)
+        append(filtred())
 
         component.saveChoice(choice)
     }
@@ -59,7 +115,7 @@ function rezka(component, _object){
      * @param {*} a 
      * @param {*} b 
      */
-     this.filter = function(type, a, b){
+    this.filter = function(type, a, b){
         choice[a.stype] = b.index
 
         if(a.stype == 'voice') choice.voice_name = filter_items.voice[b.index]
@@ -68,13 +124,9 @@ function rezka(component, _object){
 
         filter()
 
-        component.loading(true)
-
-        getFilm(select_id, extract.voice[choice.voice].token)
+        append(filtred())
 
         component.saveChoice(choice)
-
-        setTimeout(component.closeFilter,10)
     }
 
     /**
@@ -83,112 +135,109 @@ function rezka(component, _object){
     this.destroy = function(){
         network.clear()
 
-        extract = null
+        results = null
     }
 
-    function getSeasons(voice, call){
-        let url = embed + 'serial/'+voice+'/iframe?h=gidonline.io'
+    function parse(str) {
+        str = str.replace(/\n/g, '')
 
-        network.clear()
-        network.timeout(10000)
+        let find   = str.match('Playerjs\\({(.*?)}\\);')
+        let videos = str.match("file:'(.*?)'}")
 
-        network.native(url,(str)=>{
-            extractData(str)
+        if(videos){
+            let video  = decode(videos[1]) || videos[1]
 
-            call()
-        },(a,c)=>{
-            component.empty(network.errorDecode(a, c))
-        },false,{
-            dataType: 'text'
-        })
+            if (find) {
+                let json
+
+                try {
+                    json = JSON.parse(video)
+                } catch (e) {}
+
+                if (json) {
+                    extract = json
+
+                    filter()
+
+                    append(filtred())
+                }
+                else component.emptyForQuery(select_title)
+            }
+        }
+        else component.emptyForQuery(select_title)
     }
 
-    function getFirstTranlate(id, call){
-        network.clear()
-        network.timeout(10000)
-
-        network.native(embed + 'embed/'+id + '?s=1',(str)=>{
-            extractData(str)
-
-            if(extract.voice.length) call(extract.voice[0].token)
-            else component.emptyForQuery(select_title)
-        },(a,c)=>{
-            component.empty(network.errorDecode(a, c))
-        },false,{
-            dataType: 'text'
-        })
-    }
-
-    function getEmbed(url){
-        network.clear()
-        network.timeout(10000)
-
-        network.native(url,(str)=>{
-            component.loading(false)
-
-            extractData(str)
-
-            filter()
-
-            append()
-        },(a,c)=>{
-            component.empty(network.errorDecode(a, c))
-        },false,{
-            dataType: 'text'
-        })
+    function decode(data) {
+        data = data.replace('#2', '').replace('//NTR2amZoY2dkYnJ5ZGtjZmtuZHo1Njg0MzZmcmVkKypk', '').replace('//YXorLWVydyozNDU3ZWRndGpkLWZlcXNwdGYvcmUqcSpZ', '').replace('//LSpmcm9mcHNjcHJwYW1mcFEqNDU2MTIuMzI1NmRmcmdk', '').replace('//ZGY4dmc2OXI5enhXZGx5ZisqZmd4NDU1ZzhmaDl6LWUqUQ==', '').replace('//bHZmeWNnbmRxY3lkcmNnY2ZnKzk1MTQ3Z2ZkZ2YtemQq', '');
+        
+        try {
+            return decodeURIComponent(atob(data).split("").map(function (c) {
+                return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)
+            }).join(""))
+        }
+        catch (e) {
+            return ''
+        }
     }
 
     /**
-     * Запросить фильм
-     * @param {Int} id 
-     * @param {String} voice 
+     * Найти поток
+     * @param {Object} element 
+     * @param {Int} max_quality
+     * @returns string
      */
-    function getFilm(id, voice){
-        network.clear()
+    function getFile(element) {
+        let file        = ''
+        let quality     = false
+        let max_quality = 1080
+        let path        = element.slice(0, element.lastIndexOf('/')) + '/'
 
-        network.timeout(10000)
-
-        let url = embed
-
-        if(voice){
-            if(extract.season.length){
-                let ses = extract.season[Math.min(extract.season.length-1,choice.season)].id
-
-                url += 'serial/'+voice+'/iframe?s='+ses+'&h=gidonline.io'
-
-                return getSeasons(voice, ()=>{
-                    let check = extract.season.filter(s=>s.id == ses)
-
-                    if(!check.length){
-                        choice.season = extract.season.length - 1
-
-                        url = embed + 'serial/'+voice+'/iframe?s='+extract.season[Math.min(extract.season.length-1,choice.season)].id+'&h=gidonline.io'
-                    } 
-                    
-                    getEmbed(url)
-                })
-            }
-            else{
-                url += 'movie/'+voice+'/iframe?h=gidonline.io'
-
-                getEmbed(url)
-            }
+        if (file.split('/').pop().replace('.mp4', '') !== max_quality) {
+            file = path + max_quality + '.mp4'
         }
-        else{
-            url += 'embed/'+id
-            url += '?s=1'
 
-            getEmbed(url)
+        quality = {}
+
+        let mass = [1080, 720, 480, 360]
+
+        mass = mass.slice(mass.indexOf(max_quality))
+
+        mass.forEach(function (n) {
+            quality[n + 'p'] = path + n + '.mp4'
+        })
+
+        let preferably = Lampa.Storage.get('video_quality_default','1080') + 'p'
+            
+        if(quality[preferably]) file = quality[preferably]
+
+        return {
+            file: file,
+            quality: quality
         }
     }
 
     /**
      * Построить фильтр
      */
-     function filter(){
+    function filter(){
         filter_items  = {
-            season: extract.season.map(v=>v.name),
-            voice: extract.season.length ? extract.voice.map(v=>v.name) : []
+            season: [],
+            voice: [],
+            quality: []
+        }
+
+        if (extract[0].folder || object.movie.number_of_seasons) {
+            extract.forEach((season)=>{
+                filter_items.season.push(season.title)
+            })
+            
+            extract[choice.season].folder.forEach(f=>{
+                f.folder.forEach(t=>{
+                    if(filter_items.voice.indexOf(t.title) == -1) filter_items.voice.push(t.title)
+                })
+            })
+
+            if(!filter_items.voice[choice.voice]) choice.voice = 0
         }
 
         if(choice.voice_name){
@@ -199,275 +248,81 @@ function rezka(component, _object){
                 choice.voice = inx
             }
         }
-        
+
         component.filter(filter_items, choice)
     }
 
-    function parseSubtitles(str){
-        let subtitle = str.match("subtitle': '(.*?)'")
-
-        if(subtitle){
-            let index = -1
-
-            return subtitle[1].split(',').map((sb)=>{
-                let sp = sb.split(']')
-
-                index++
-
-                return {
-                    label: sp[0].slice(1),
-                    url: sp.pop(),
-                    index: index
-                }
-            })
-        }
-    }
-
     /**
-     * Получить поток
-     * @param {*} element 
+     * Отфильтровать файлы
+     * @returns array
      */
-    function getStream(element, call, error){
-        if(element.stream) return call(element.stream)
+    function filtred(){
+        let filtred = []
 
-        let url = embed
+        let filter_data = Lampa.Storage.get('online_filter', '{}')
 
-        if(element.season){
-            url += 'serial/'+extract.voice[choice.voice].token+'/iframe?s='+element.season+'&e='+element.episode+'&h=gidonline.io'
-        }
-        else{
-            url += 'movie/'+element.voice.token+'/iframe?h=gidonline.io'
-        }
-
-        network.clear()
-
-        network.timeout(3000)
-
-        network.native(url,(str)=>{
-            var videos = str.match("file': '(.*?)'")
-
-            if(videos){
-                let video = decode(videos[1]),
-                    qused = '',
-                    first = '',
-                    mass = ['2160p','1440p','1080p Ultra','1080p','720p','480p','360p']
-                
-                //ухня тут происходит, хрен знает почему после .join() возврошает только последнию ссылку
-                video = video.slice(1).split(/,\[/).map((s)=>{
-                    return s.split(']')[0] + ']' + (s.indexOf(' or ') > -1 ? s.split(' or').pop().trim() : s.split(']').pop())
-                }).join('[')
-
-                element.qualitys = {}
-
-                let preferably = Lampa.Storage.get('video_quality_default','1080')
-
-                mass.forEach((n)=>{
-                    let link = video.match(new RegExp(n + "](.*?)mp4"))
-
-                    if(link){
-                        if(!first) first = link[1]+'mp4'
-
-                        element.qualitys[n] = link[1]+'mp4'
-
-                        if(n.indexOf(preferably) >= 0){
-                            qused = link[1]+'mp4'
-
-                            first = qused
-                        } 
-                    }
-                })
-
-                if(!first) element.qualitys = false
-
-                if(first){
-                    element.stream = qused || first
-
-                    element.subtitles = parseSubtitles(str)
-
-                    call(element.stream)
-                }
-                else error()
-            }
-            else error()
-
-        },error,false,{
-            dataType: 'text'
-        })
-    }
-
-    function decode(data) {
-        function product(iterables, repeat) {
-            var argv = Array.prototype.slice.call(arguments),
-                argc = argv.length;
-            if (argc === 2 && !isNaN(argv[argc - 1])) {
-                var copies = [];
-                for (var i = 0; i < argv[argc - 1]; i++) {
-                    copies.push(argv[0].slice()); // Clone
-                }
-                argv = copies;
-            }
-            return argv.reduce(function tl(accumulator, value) {
-                var tmp = [];
-                accumulator.forEach(function(a0) {
-                    value.forEach(function(a1) {
-                        tmp.push(a0.concat(a1));
-                    });
-                });
-                return tmp;
-            }, [
-                []
-            ]);
-        }
-    
-        function unite(arr) {
-            var final = [];
-            arr.forEach(function(e) {
-                final.push(e.join(""))
-            })
-            return final;
-        }
-        var trashList = ["@", "#", "!", "^", "$"];
-        var two = unite(product(trashList, 2));
-        var tree = unite(product(trashList, 3));
-        var trashCodesSet = two.concat(tree);
-    
-        var arr = data.replace("#h", "").split("//_//");
-        var trashString = arr.join('');
-    
-        trashCodesSet.forEach(function(i) {
-            trashString = trashString.replace(new RegExp(btoa(i),'g'),'')
-        })
-
-        var result = ''
-
-        try{
-            result = atob(trashString.substr(2))
-        }
-        catch(e){}
-
-        return result
-    }
-
-    /*
-    function decode(x){
-        let file = x.replace('JCQkIyMjIyEhISEhISE=', '')
-            .replace('QCMhQEBAIyMkJEBA', '')
-            .replace('QCFeXiFAI0BAJCQkJCQ=', '')
-            .replace('Xl4jQEAhIUAjISQ=', '')
-            .replace('Xl5eXl5eIyNAzN2FkZmRm', '')
-            .split('//_//')
-            .join('')
-            .substr(2)
-        try {
-            return atob(file)
-        } catch (e){
-            console.log("Encrypt error: ", file)
-            return ''
-        }
-    }
-    */
-
-    /**
-     * Получить данные о фильме
-     * @param {String} str 
-     */
-    function extractData(str){
-        extract.voice   = []
-        extract.season  = []
-        extract.episode = []
-
-        str = str.replace(/\n/g,'')
-
-        let voices = str.match('<select name="translator"[^>]+>(.*?)</select>')
-        let sesons = str.match('<select name="season"[^>]+>(.*?)</select>')
-        let episod = str.match('<select name="episode"[^>]+>(.*?)</select>')
-
-        if(sesons){
-            let select = $('<select>'+sesons[1]+'</select>')
-
-            $('option',select).each(function(){
-                extract.season.push({
-                    id: $(this).attr('value'),
-                    name: $(this).text()
-                })
-            })
-        }
-
-        if(voices){
-            let select = $('<select>'+voices[1]+'</select>')
-
-            $('option',select).each(function(){
-                let token = $(this).attr('data-token')
-
-                if(token){
-                    extract.voice.push({
-                        token: token,
-                        name: $(this).text(),
-                        id: $(this).val()
+        if (extract[0].folder || object.movie.number_of_seasons) {
+            extract.forEach(function (t) {
+                if (t.title == filter_items.season[filter_data.season]) {
+                    t.folder.forEach(function (se) {
+                        se.folder.forEach(function (eps) {
+                            if (eps.title == filter_items.voice[choice.voice]) {
+                                filtred.push({
+                                    file: eps.file,
+                                    episode: parseInt(se.title.match(/\d+/)),
+                                    season: parseInt(t.title.match(/\d+/)),
+                                    quality: '360p ~ 1080p',
+                                    info: ' / ' + Lampa.Utils.shortText(eps.title,50) 
+                                })
+                            }
+                        })
                     })
                 }
             })
-        }
-
-        if(episod){
-            let select = $('<select>'+episod[1]+'</select>')
-
-            $('option',select).each(function(){
-                extract.episode.push({
-                    id: $(this).attr('value'),
-                    name: $(this).text()
+        } 
+        else {
+            extract.forEach(function (data) {
+                filtred.push({
+                    file: data.file,
+                    title: data.title,
+                    quality: '360p ~ 1080p',
+                    info: '',
+                    subtitles: data.subtitle ? data.subtitle.split(',').map(function (c) {
+                        return {
+                            label: c.split(']')[0].slice(1),
+                            url: c.split(']')[1]
+                        }
+                    }) : false
                 })
             })
         }
+
+        return filtred
     }
 
     /**
-     * Показать файлы
+     * Добавить видео
+     * @param {Array} items 
      */
-    function append(){
+    function append(items){
         component.reset()
 
-        let items  = []
         let viewed = Lampa.Storage.cache('online_view', 5000, [])
 
-        if(extract.season.length){
-            extract.episode.forEach(episode=>{
-                items.push({
-                    title: 'S' + extract.season[Math.min(extract.season.length-1,choice.season)].id + ' / ' + episode.name,
-                    quality: '720p ~ 1080p',
-                    season: extract.season[Math.min(extract.season.length-1,choice.season)].id,
-                    episode: parseInt(episode.id),
-                    info: ' / ' + extract.voice[choice.voice].name,
-                    voice: extract.voice[choice.voice]
-                })
-            })
-        }
-        else{
-            extract.voice.forEach(voice => {
-                items.push({
-                    title: voice.name.length > 3 ? voice.name : select_title,
-                    quality: '720p ~ 1080p',
-                    voice: voice,
-                    info: ''
-                })
-            })
-        }
-
-        let last_episode = component.getLastEpisode(items)
-
         items.forEach(element => {
+            if(element.season) element.title = 'S'+element.season + ' / ' + Lampa.Lang.translate('torrent_serial_episode') + ' ' + element.episode
+
+            element.info = element.season ? ' / ' + Lampa.Utils.shortText(filter_items.voice[choice.voice], 50) : ''
+
             let hash = Lampa.Utils.hash(element.season ? [element.season,element.episode,object.movie.original_title].join('') : object.movie.original_title)
             let view = Lampa.Timeline.view(hash)
             let item = Lampa.Template.get('online',element)
 
-            let hash_file = Lampa.Utils.hash(element.season ? [element.season,element.episode,object.movie.original_title,element.voice.name].join('') : object.movie.original_title + element.voice.name)
+            let hash_file = Lampa.Utils.hash(element.season ? [element.season,element.episode,object.movie.original_title,filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title)
+
+            item.addClass('video--stream')
 
             element.timeline = view
-
-            if(element.season){
-                element.translate_episode_end = last_episode
-                element.translate_voice       = element.voice.name
-            }
 
             item.append(Lampa.Timeline.render(view))
 
@@ -480,49 +335,40 @@ function rezka(component, _object){
             item.on('hover:enter',()=>{
                 if(object.movie.id) Lampa.Favorite.add('history', object.movie, 100)
 
-                getStream(element,(stream)=>{
+                let extra = getFile(element.file)
+
+                if(extra.file){
+                    let playlist = []
                     let first = {
-                        url: stream,
+                        url: extra.file,
+                        quality: extra.quality,
                         timeline: view,
-                        quality: element.qualitys,
-                        title: element.title
+                        subtitles: element.subtitles,
+                        title: element.season ? element.title : object.movie.title + ' / ' + element.title
                     }
+
+                    if(element.season){
+                        items.forEach(elem=>{
+                            let ex = getFile(elem.file)
+
+                            playlist.push({
+                                title: elem.title,
+                                url: ex.file,
+                                quality: ex.quality,
+                                subtitles: elem.subtitles,
+                                timeline: elem.timeline
+                            })
+                        })
+                    }
+                    else{
+                        playlist.push(first)
+                    }
+
+                    if(playlist.length > 1) first.playlist = playlist
 
                     Lampa.Player.play(first)
 
-                    if(element.season && Lampa.Platform.version){
-                        let playlist = []
-
-                        items.forEach(elem => {
-                            let cell = {
-                                url: (call)=>{
-                                    getStream(elem,(stream)=>{
-                                        cell.url = stream
-                                        cell.quality = elem.qualitys
-
-                                        call()
-                                    },()=>{
-                                        cell.url = ''
-
-                                        call()
-                                    })
-                                },
-                                timeline: elem.timeline,
-                                title: elem.title,
-                            }
-
-                            if(elem == element) cell.url = stream
-
-                            playlist.push(cell)
-                        })
-
-                        Lampa.Player.playlist(playlist)
-                    }
-                    else{
-                        Lampa.Player.playlist([first])
-                    }
-
-                    if(element.subtitles && Lampa.Player.subtitles) Lampa.Player.subtitles(element.subtitles)
+                    Lampa.Player.playlist(playlist)
 
                     if(viewed.indexOf(hash_file) == -1){
                         viewed.push(hash_file)
@@ -531,9 +377,8 @@ function rezka(component, _object){
 
                         Lampa.Storage.set('online_view', viewed)
                     }
-                },()=>{
-                    Lampa.Noty.show(Lampa.Lang.translate('online_nolink'))
-                })
+                }
+                else Lampa.Noty.show(Lampa.Lang.translate('online_nolink'))
             })
 
             component.append(item)
@@ -543,8 +388,7 @@ function rezka(component, _object){
                 view,
                 viewed,
                 hash_file,
-                element,
-                file: (call)=>{ getStream(element,(stream)=>{call({file:stream,quality:element.qualitys})})}
+                file: (call)=>{call(getFile(element.file))}
             })
         })
 
@@ -552,4 +396,4 @@ function rezka(component, _object){
     }
 }
 
-export default rezka
+export default cdnmovies
